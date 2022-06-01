@@ -1,0 +1,400 @@
+---
+title: "Data Transformation"
+author: "Julian Sass"
+date: "6/22/2021"
+output: html_document
+---
+```{r setup, include=FALSE}
+library(ggplot2)
+#library(psych)
+#library(lattice)
+#library(FSA)
+#library(rcompanion)
+#library(multcompView)
+library(tidyverse)
+#library(anchors)
+library("DescTools")
+cmvData <-
+  read.csv(file = "C:/Users/Julian/Dropbox/2019_Summer_Project_Rebound/code/summer-2019/CMV/rhCMV P01 data summary_v10.csv", header = TRUE, sep = ",",fileEncoding = 'UTF-8-BOM', stringsAsFactors = F)
+cmvData <- cmvData[complete.cases(cmvData$Animal_ID), ]
+#library(geepack)
+#library(PGEE)
+#library(gee)
+library(dplyr)
+#cmvData$Transmission_binary <- as.factor(cmvData$Transmission_binary)
+#sum(is.na(cmvData$gB_ELISA_endpoint_titer))
+#cmvData$gB_ELISA_endpoint_titer_log <- as.numeric(cmvData$gB_ELISA_endpoint_titer_log)
+cmvData <- cmvData[cmvData$Weeks_post_infection >= 0 & !is.na(cmvData$Weeks_post_infection), ]
+cmvAUC <- data.frame(iD = unique(cmvData$Animal_ID) , Group = rep("",length(unique(cmvData$Animal_ID))), Transmission_status = rep("",length(unique(cmvData$Animal_ID))))
+
+for (iD in unique(cmvData$Animal_ID)) {
+  cmvAUC$Group[cmvAUC$iD == iD] <- cmvData$Specific_Group[cmvData$Animal_ID == iD][1]
+  cmvAUC$Transmission_status[cmvAUC$iD == iD] <- cmvData$Transmission_status[cmvData$Animal_ID == iD][1]
+}
+
+# Endpoint of AUC
+endpoint = 3
+```
+
+
+```{r transform}
+# For each monkey, take the AUC of the first "endpoint" weeks
+# If there is no data at the endpoint, do a linear fit between the point before an the point after the endpoint, and use the
+# interpolated value at the endpoint as the endpoint value
+# If there is no value after tne endpoint, then forward fill the point before the endpoint as the endpoint value
+# Then do this for each column
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection,
+                       Maternal_plasma_viral_load,
+                       Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    #print(pre)
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    } else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$Maternal_plasma_viral_load,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  print(subject)
+  cmvAUC$Maternal_plasma_viral_load[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$Maternal_plasma_viral_load,
+      method = "trapezoid"
+    )
+}
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, Whole_virus_IgG, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$Whole_virus_IgG,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$Whole_virus_IgG[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$Whole_virus_IgG,
+      method = "trapezoid"
+    )
+}
+
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, Whole_virus_IgM, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$Whole_virus_IgM,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$Whole_virus_IgM[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection[subject$Weeks_post_infection <= endpoint],
+      y = subject$Whole_virus_IgM[subject$Weeks_post_infection <= endpoint],
+      method = "trapezoid"
+    )
+}
+
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, gB_ELISA, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$gB_ELISA,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$gB_ELISA[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$gB_ELISA,
+      method = "trapezoid"
+    )
+}
+
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, PC_ELISA, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$PC_ELISA,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$PC_ELISA[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$PC_ELISA,
+      method = "trapezoid"
+    )
+}
+
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, Fibroblast_neut, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$Fibroblast_neut,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$Fibroblast_neut[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$Fibroblast_neut,
+      method = "trapezoid"
+    )
+}
+
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, gB_TCB, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    print(post)
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$gB_TCB,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$gB_TCB[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$gB_TCB,
+      method = "trapezoid"
+    )
+}
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, ADCP, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$ADCP,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$ADCP[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$ADCP,
+      method = "trapezoid"
+    )
+}
+
+
+for (iD in unique(cmvData$Animal_ID)) {
+  data <-
+    cmvData %>% select(Weeks_post_infection, ADCC, Animal_ID) %>% na.omit()
+  subject <- subset(data, Animal_ID == iD)
+  subject <- subject[subject$Weeks_post_infection <= endpoint, ]
+  if (!(iD %in% data[, 3][data[, 1] == endpoint])) {
+    pre <-
+      subject[subject[, 1] < endpoint, ][nrow(subject[subject[, 1] < endpoint, ]), ]
+    post <- subject[subject[, 1] > endpoint, ][1, ]
+    if (!(is.na(post[1, 1]))) {
+      m <- (post[, 2] - pre[, 2]) / (post[, 1] - pre[, 1])
+      y <- pre[, 2] + m * (endpoint - pre[, 1])
+      subject <- rbind(subject, c(endpoint, y, iD))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }else{
+      subject <-
+        rbind(subject,
+              c(
+                endpoint,
+                pre$ADCC,
+                pre$Animal_ID
+              ))
+      subject[, 1] <- as.numeric(subject[, 1])
+      subject[, 2] <- as.numeric(subject[, 2])
+      subject <- subject[order(subject[, 1]),]
+    }
+  }
+  cmvAUC$ADCC[cmvAUC$iD == iD] <-
+    AUC(
+      x = subject$Weeks_post_infection,
+      y = subject$ADCC,
+      method = "trapezoid"
+    )
+}
+
+
+```
+
+```{r}
+# Save values as AUC
+cmvAUC = anchors::replace.value(cmvAUC,names(cmvAUC),0,as.double(NA))
+cmvAUC = anchors::replace.value(cmvAUC,names(cmvAUC),"NaN",as.double(NA))
+write.csv(cmvAUC,'cmvAUC_v6.csv')
+```
+
+

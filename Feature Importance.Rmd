@@ -1,0 +1,140 @@
+---
+title: "Feature Importance"
+author: "Julian Sass"
+date: "2/28/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(survival)
+library(survminer)
+library(glmnet)
+library(mice)
+library(pROC)
+
+data <- read.csv(file = "C:/Users/Julian/Dropbox/2019_Summer_Project_Rebound/code/summer-2019/CMV/cmvAUC_v6_log.csv", header = TRUE, sep = ",",fileEncoding = 'UTF-8-BOM')
+
+# Remove all unecessary parameters and highly correlated parameters
+data <- subset(data, select = -c(iD,Group,SHAP,SHAP2,gB_ELISA))
+head(data)
+# Replace missing data with mean of the rest of the column
+for(i in 1:ncol(data)) {
+  data[ , i][is.na(data[ , i])] <- mean(data[ , i], na.rm = TRUE)
+}
+head(data)
+
+# X is input, y is output
+X <- data[,-1]
+y<- data[,1]
+
+```
+
+```{r lasso}
+# Run LASSO 
+phmod_lasso = glmnet(X, 
+                     y,
+                     family = "binomial",intercept=TRUE)
+```
+
+```{r parameter-ranking}
+#Get a "predictor inclusion" ranking table.
+set.seed(42)
+# get inclusion order
+pred_in = NULL
+coef_sign = NULL
+for(l in phmod_lasso$lambda){
+  coefficients = coef(phmod_lasso, s=l)
+  active_index = which(coefficients != 0)
+  active_coefficients = coefficients[active_index]
+  active_predictors = attr(coefficients,"Dimnames")[[1]][active_index]
+  
+  #cat(active_predictors, "\n")
+  if(length(active_index) > 7){ break }
+  
+  if(any(!active_predictors %in% pred_in)){
+    #cat('Added new predictors! Now active:', active_predictors, '\n')
+    
+    new_index = which(!active_predictors %in% pred_in)
+    pred_in = c(pred_in, active_predictors[new_index])
+    new_coef_sign = ifelse(active_coefficients[new_index] > 0, 
+                           "+", "-")
+    coef_sign = c(coef_sign, new_coef_sign)
+  }
+}
+```
+
+```{r parameter-effect}
+# Effect of each parameter on the output as the parameter increases
+rebound_effect = sapply(coef_sign, 
+                        function(x) ifelse(x=="+","increase","decrease")) %>%
+  as.vector()
+```
+
+```{r auc-roc}
+# Also use the AUC of the ROC Curve to rank parameters
+Response = "y"
+Cum_C_stats = NULL
+for(i in 1:length(pred_in)){
+  if(i==1){ covars="1"}else{covars=pred_in[2:i]}
+  f = as.formula(paste(Response,paste(covars,collapse = "+"),sep = " ~ "))
+  mod = glm(f, data=X, family = "binomial")
+  test_prob = predict(mod, newdata = X, type = "response")
+  test_roc = roc(y ~ test_prob, plot = TRUE, print.auc = TRUE)
+  C_covars = test_roc$au %>% as.numeric()
+  Cum_C_stats = c(Cum_C_stats, C_covars)
+}
+
+#if(i==1) covars="1"
+#if(i>1) covars=pred_in[2:i]
+
+```
+
+```{r crossvalid}
+cv_phmod_lasso3 = cv.glmnet(X %>% as.matrix(), y, family = "binomial", nfolds = 10, keep = T, lambda = phmod_lasso$lambda)
+plot(cv_phmod_lasso3)
+```
+
+```{r deviance-ranking}
+# Add LOO deviance to table
+pred_in2 = NULL
+LOO_deviance = NULL
+i <- 0
+for(l in phmod_lasso$lambda){
+  coefficients = coef(phmod_lasso, s = l)
+  active_index = which(coefficients != 0)
+  #active_coefficients = coefficients[active_index]
+  active_predictors = attr(coefficients,"Dimnames")[[1]][active_index]
+  
+  #cat(active_predictors, "\n")
+  #if(length(active_index) > 7){ break }
+  
+  if(any(!active_predictors %in% pred_in2)){
+    print(i+1)
+    i=i+1
+    new_index = which(!active_predictors %in% pred_in2)
+    pred_in2 = c(pred_in2, active_predictors[new_index])
+    
+    l_index = which(cv_phmod_lasso3$lambda == l)
+    LOO_deviance = c(LOO_deviance, cv_phmod_lasso3$cvm[l_index])
+  }
+}
+#log(cv_phmod_lasso3$lambda[18])
+#cv_phmod_lasso3$cvm[1:20]
+#coef(cv_phmod_lasso3, s = cv_phmod_lasso3$lambda)
+#cbind(coef(cv_phmod_lasso3, s = phmod_lasso$lambda[1:3]),coef(phmod_lasso, s = phmod_lasso$lambda[1:3]))
+```
+
+```{r final-ranking}
+# See final ranking for parameters, the most important parameters to classifications are the parameters at and above the minimum
+# value of the LOO deviance
+predictor_inclusion = data.frame(Inclusion_Rank = c(1:length(pred_in)),
+                                 Predictor = pred_in,
+                                 #Coefficient = coef_sign,
+                                 Transmission_Prob_Effect = rebound_effect,
+                                 ROC_AUC = Cum_C_stats,
+                                 LOOCV_deviance = LOO_deviance)
+predictor_inclusion
+#write.csv(predictor_inclusion,'predictor_inclusion.csv')
+```
+
